@@ -7,6 +7,14 @@ import "Model.js" as Model
 // Bar icon plus a popup listing the presets EasyEffects can see, the bundled
 // ones and the user's own in one list because EasyEffects has one namespace and
 // showing two would be a fiction.
+//
+// A row is one line. The descriptions exist for somebody who did not make these
+// presets, but ten of them on screen at once is a wall of prose nobody reads,
+// so a row says what it is only while the cursor is on it.
+//
+// Every label sets an explicit width and elides. A Text that sizes itself is
+// what puts content outside the popup surface, drawn over whatever is behind
+// the bar.
 Panel {
   id: root
 
@@ -65,14 +73,120 @@ Panel {
     else root.toggle()
   }
 
-  function noteFor(row) {
-    if (row.missingKernels.length > 0) {
-      return "Needs " + row.missingKernels[0] + ", which is not in your irs folder."
+  // Short enough to sit at the end of a row. The reason behind it goes in the
+  // description line, which only the hovered row shows.
+  function statusFor(entry) {
+    if (entry.missingKernels.length > 0) return "no impulse response"
+    if (!entry.bundled) return ""
+    var verdict = verdicts && Object.prototype.hasOwnProperty.call(verdicts, entry.name) ? verdicts[entry.name] : ""
+    return verdict === "yours" ? "edited by you" : verdict === "skipped" ? "name taken" : ""
+  }
+
+  function captionFor(entry) {
+    if (entry.missingKernels.length > 0) return "Needs " + entry.missingKernels[0] + "."
+    if (!entry.description) return ""
+    return entry.description.caution
+      ? entry.description.summary + " " + entry.description.caution
+      : entry.description.summary
+  }
+
+  component PresetRow: CursorSurface {
+    id: presetRow
+
+    required property var entry
+    required property string pipeline
+
+    readonly property string caption: root.captionFor(entry)
+    readonly property string status: root.statusFor(entry)
+    readonly property bool warned: entry.missingKernels.length > 0
+    readonly property bool expanded: rowMouse.containsMouse && caption !== ""
+
+    current: entry.active
+    foreground: root.foreground
+    implicitHeight: rowContent.implicitHeight + Style.spacing.rowPaddingX
+
+    MouseArea {
+      id: rowMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      enabled: root.eeState.canAct
+      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: if (root.ee) root.ee.applyPreset(presetRow.pipeline, presetRow.entry.name)
     }
-    if (!row.bundled) return ""
-    var verdict = verdicts && Object.prototype.hasOwnProperty.call(verdicts, row.name) ? verdicts[row.name] : ""
-    return verdict === "yours" ? "Edited by you. Left alone."
-      : verdict === "skipped" ? "You already have a preset with this name." : ""
+
+    Item {
+      id: rowContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(10)
+      anchors.rightMargin: Style.space(10)
+      implicitHeight: Math.max(rowIcon.implicitHeight, rowLabels.implicitHeight)
+
+      Text {
+        id: rowIcon
+        textFormat: Text.PlainText
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        text: presetRow.entry.active ? Model.GLYPH_ACTIVE : presetRow.warned ? Model.GLYPH_ALERT : Model.GLYPH_EQ
+        color: presetRow.warned ? root.urgent : root.foreground
+        opacity: presetRow.entry.active || presetRow.warned ? 1.0 : 0.4
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.heading
+      }
+
+      Column {
+        id: rowLabels
+        spacing: Style.space(1)
+        anchors.left: rowIcon.right
+        anchors.leftMargin: Style.space(10)
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+
+        Item {
+          width: parent.width
+          implicitHeight: Math.max(nameText.implicitHeight, statusText.implicitHeight)
+
+          Text {
+            id: nameText
+            textFormat: Text.PlainText
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, parent.width - (statusText.visible ? statusText.implicitWidth + Style.space(8) : 0))
+            text: presetRow.entry.name
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+          }
+
+          Text {
+            id: statusText
+            textFormat: Text.PlainText
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            visible: presetRow.status !== ""
+            text: presetRow.status
+            color: presetRow.warned ? root.urgent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          visible: presetRow.expanded
+          text: presetRow.caption
+          color: root.dim
+          wrapMode: Text.WordWrap
+          maximumLineCount: 2
+          elide: Text.ElideRight
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+    }
   }
 
   Loader {
@@ -107,6 +221,16 @@ Panel {
     }
   }
 
+  Component {
+    id: bypassControl
+
+    ToggleSwitch {
+      checked: root.view.bypassed
+      foreground: root.foreground
+      onToggled: if (root.ee) root.ee.toggleBypass()
+    }
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: button
@@ -114,8 +238,8 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(360))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(600))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(560))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -133,35 +257,37 @@ Panel {
         anchors.right: parent.right
         spacing: Style.spacing.sm
 
+        // The one hero this panel has. `detail` is a pill on the title row, so
+        // it takes a word and never a sentence.
         PanelHero {
           width: parent.width
           foreground: root.foreground
           fontFamily: root.fontFamily
           title: root.eeState.title !== "" ? root.eeState.title
             : (root.view.preset !== "" ? root.view.preset : "No preset loaded")
-          meta: root.eeState.title !== "" ? "" : (root.view.deviceLabel !== "" ? "Playing through " + root.view.deviceLabel : "")
-          detail: root.eeState.detail
+          meta: root.eeState.title !== "" || root.view.deviceLabel === "" ? "" : root.view.deviceLabel
+          detail: root.view.bypassed ? "bypassed" : ""
+          trailingControl: root.eeState.canAct ? bypassControl : null
 
           iconComponent: Component {
             Text {
+              textFormat: Text.PlainText
               text: Model.barGlyph(root.view)
               color: root.view.bypassed ? root.urgent : root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.display
             }
           }
-
-          trailingControl: root.eeState.canAct ? bypassControl : null
         }
 
-        Component {
-          id: bypassControl
-
-          ToggleSwitch {
-            checked: root.view.bypassed
-            foreground: root.foreground
-            onToggled: if (root.ee) root.ee.toggleBypass()
-          }
+        Text {
+          width: parent.width
+          visible: root.eeState.detail !== ""
+          text: root.eeState.detail
+          color: root.dim
+          wrapMode: Text.WordWrap
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
         }
 
         Button {
@@ -170,6 +296,7 @@ Panel {
           text: root.eeState.actionLabel
           foreground: root.foreground
           fontFamily: root.fontFamily
+          bordered: true
           onClicked: {
             if (!root.ee) return
             if (root.eeState.action === "install") root.ee.install()
@@ -193,6 +320,7 @@ Panel {
         }
 
         PanelSectionHeader {
+          width: parent.width
           text: "Output presets"
           foreground: root.foreground
           fontFamily: root.fontFamily
@@ -202,39 +330,11 @@ Panel {
         Repeater {
           model: root.presets
 
-          PanelHero {
+          PresetRow {
             required property var modelData
-
             width: column.width
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            iconOpacity: modelData.active ? 1.0 : 0.35
-            title: modelData.name
-            meta: modelData.description ? modelData.description.summary : ""
-            detail: {
-              var note = root.noteFor(modelData)
-              if (note !== "") return note
-              if (!modelData.description) return ""
-              return modelData.description.caution
-                ? modelData.description.use + " " + modelData.description.caution
-                : modelData.description.use
-            }
-
-            iconComponent: Component {
-              Text {
-                text: modelData.active ? Model.GLYPH_ACTIVE
-                  : (modelData.missingKernels.length > 0 ? Model.GLYPH_ALERT : Model.GLYPH_EQ)
-                color: modelData.missingKernels.length > 0 ? root.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.icon
-              }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              enabled: root.eeState.canAct
-              onClicked: if (root.ee) root.ee.applyPreset("output", modelData.name)
-            }
+            entry: modelData
+            pipeline: "output"
           }
         }
 
@@ -245,6 +345,7 @@ Panel {
         }
 
         PanelSectionHeader {
+          width: parent.width
           text: "Input presets"
           foreground: root.foreground
           fontFamily: root.fontFamily
@@ -254,29 +355,11 @@ Panel {
         Repeater {
           model: root.inputPresets
 
-          PanelHero {
+          PresetRow {
             required property var modelData
-
             width: column.width
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            iconOpacity: modelData.active ? 1.0 : 0.35
-            title: modelData.name
-
-            iconComponent: Component {
-              Text {
-                text: modelData.active ? Model.GLYPH_ACTIVE : Model.GLYPH_EQ
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.icon
-              }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              enabled: root.eeState.canAct
-              onClicked: if (root.ee) root.ee.applyPreset("input", modelData.name)
-            }
+            entry: modelData
+            pipeline: "input"
           }
         }
 
@@ -287,7 +370,7 @@ Panel {
           color: root.urgent
           wrapMode: Text.WordWrap
           font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: Style.font.caption
         }
       }
     }
