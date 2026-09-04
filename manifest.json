@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "wian47.easyeffects",
+  "name": "EasyEffects",
+  "version": "0.1.0",
+  "author": "Wian Schoeman",
+  "license": "MIT",
+  "homepage": "https://github.com/Wian47/omarchy-easyeffects",
+  "description": "Switch EasyEffects presets from the Omarchy bar, and ten presets worth switching to.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "EasyEffects",
+    "description": "The active audio preset, one click from changing it, plus a bypass to hear the source untouched.",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "barLabel": "preset",
+      "syncPresets": true,
+      "hideWhenUnavailable": false
+    },
+    "schema": [
+      {
+        "key": "barLabel",
+        "type": "enum",
+        "label": "Text beside the icon",
+        "options": [
+          "none",
+          "preset",
+          "device"
+        ],
+        "defaultValue": "preset",
+        "description": "Show the active preset or the output device it is playing through. Vertical bars stay icon-only."
+      },
+      {
+        "key": "syncPresets",
+        "type": "boolean",
+        "label": "Keep the bundled presets installed",
+        "defaultValue": true,
+        "description": "Copy the ten bundled presets into EasyEffects and keep them current. A preset you have edited is never overwritten, and a name you already use is left alone."
+      },
+      {
+        "key": "hideWhenUnavailable",
+        "type": "boolean",
+        "label": "Hide when EasyEffects is unavailable",
+        "defaultValue": false,
+        "description": "Leave the bar alone when EasyEffects is closed or not installed, instead of showing a dimmed icon that offers to fix it."
+      }
+    ]
+  }
+}

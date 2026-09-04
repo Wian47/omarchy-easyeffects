@@ -79,3 +79,50 @@ function describe(name) {
 function isBundled(name) {
   return Object.prototype.hasOwnProperty.call(CATALOGUE, name)
 }
+
+// Which of five things to do with one bundled preset, decided from three
+// hashes and nothing else. `disk` is null when the file is not there, `ledger`
+// is null when this plugin has no record of writing it.
+//
+// The whole point is the difference between a file we wrote and a file that
+// merely has the same name. Presence alone cannot tell them apart, which is
+// what the ledger is for, and getting it wrong overwrites somebody's own work.
+function verdictFor(bundled, disk, ledger) {
+  if (disk === null || disk === undefined) return "install"
+  if (disk === bundled) return "current"
+  if (!ledger) return "skipped"
+  return disk === ledger ? "update" : "yours"
+}
+
+var VERDICTS = {
+  "install": { writes: true, note: "" },
+  "current": { writes: false, note: "" },
+  "update": { writes: true, note: "" },
+  "yours": { writes: false, note: "Edited by you. Left alone." },
+  "skipped": { writes: false, note: "You already have a preset with this name." }
+}
+
+function verdictNote(verdict) {
+  var entry = Object.prototype.hasOwnProperty.call(VERDICTS, verdict) ? VERDICTS[verdict] : null
+  return entry ? entry.note : ""
+}
+
+// A sync run: every bundled preset gets a verdict, and only the ones whose
+// verdict writes are handed to the copier. Running it twice writes nothing the
+// second time, which is what makes it safe to run whenever anything changes.
+function syncPlan(bundled, disk, ledger) {
+  var plan = { verdicts: {}, write: [] }
+  var names = Object.keys(bundled)
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i]
+    var verdict = verdictFor(
+      bundled[name],
+      Object.prototype.hasOwnProperty.call(disk, name) ? disk[name] : null,
+      Object.prototype.hasOwnProperty.call(ledger, name) ? ledger[name] : null
+    )
+    plan.verdicts[name] = verdict
+    if (VERDICTS[verdict].writes) plan.write.push(name)
+  }
+  plan.write.sort()
+  return plan
+}

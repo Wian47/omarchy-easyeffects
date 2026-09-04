@@ -65,6 +65,76 @@ attempt "a preset carrying an absolute path from its author's machine" \
 attempt "a preset section the pipeline does not have" \
   "node -e 'const f=\"presets/output/Boosted.json\",fs=require(\"fs\");const d=JSON.parse(fs.readFileSync(f));d.sidechain={};fs.writeFileSync(f,JSON.stringify(d,null,4))'"
 
+attempt "a bypass conversion that inverts the setting" \
+  "sed -i 's/return \"global_bypass:\" + (wanted ? \"1\" : \"0\")/return \"global_bypass:\" + (wanted ? \"0\" : \"1\")/' Model.js" \
+  model
+
+attempt "a readiness that would sync presets with EasyEffects absent" \
+  "sed -i '0,/    canSync: false/s//    canSync: true/' Model.js" \
+  model
+
+attempt "a bar label that stops holding its width" \
+  "sed -i 's/while (out.length < width) out = out + PAD/return out/' Model.js" \
+  model
+
+attempt "a preset lookup that answers with an Object member" \
+  "sed -i 's/uses: own(usage, name) || 0/uses: usage[name] || 0/' Model.js" \
+  model
+
+attempt "a QML file that no longer parses" \
+  "printf '\nItem { property int x: }\n' >> Service.qml" \
+  wiring
+
+attempt "a call to a Model function that does not exist" \
+  "sed -i 's/Model\.barGlyph(/Model.barGlyphRenamed(/' Panel.qml" \
+  wiring
+
+attempt "a panel binding to a service property that does not exist" \
+  "sed -i '0,/ee\.readiness/s//ee.isReady/' Panel.qml" \
+  wiring
+
+# The bar builds this panel once per monitor, and two services would run two
+# syncs against one preset directory. Invisible to any check that reads one file.
+attempt "a Service built inside the panel, which the bar would build twice" \
+  "sed -i '0,/  Loader {/s//  Service { id: rogue }\n\n  Loader {/' Panel.qml" \
+  wiring
+
+attempt "a panel that no longer asks the shell for the shared service" \
+  "sed -i 's/serviceFor(\"wian47.easyeffects\")/serviceFor(\"wian47.something-else\")/' Panel.qml" \
+  wiring
+
+attempt "a manifest that stops declaring the service kind" \
+  "node -e 'const f=\"manifest.json\";const m=require(\"./\"+f);m.kinds=[\"bar-widget\"];require(\"fs\").writeFileSync(f,JSON.stringify(m,null,2))'" \
+  wiring
+
+attempt "an entry point naming a file that is not in the plugin" \
+  "node -e 'const f=\"manifest.json\";const m=require(\"./\"+f);m.entryPoints.service=\"Missing.qml\";require(\"fs\").writeFileSync(f,JSON.stringify(m,null,2))'" \
+  wiring
+
+attempt "a setting offered in the manifest that no code reads" \
+  "node -e 'const f=\"manifest.json\";const m=require(\"./\"+f);m.barWidget.defaults.unusedKnob=1;m.barWidget.schema.push({key:\"unusedKnob\",type:\"boolean\",label:\"x\",defaultValue:true,description:\"x\"});require(\"fs\").writeFileSync(f,JSON.stringify(m,null,2))'" \
+  wiring
+
+attempt "a bar label mode the manifest offers and the model cannot draw" \
+  "node -e 'const f=\"manifest.json\";const m=require(\"./\"+f);m.barWidget.schema.find(e=>e.key===\"barLabel\").options.push(\"sideways\");require(\"fs\").writeFileSync(f,JSON.stringify(m,null,2))'" \
+  wiring
+
+attempt "a manifest id the panel does not register" \
+  "sed -i 's/moduleName: \"wian47.easyeffects\"/moduleName: \"wian47.renamed\"/' Panel.qml" \
+  wiring
+
+# The plugin hands escalation to Omarchy's installer, in a terminal the user can
+# see. A password prompt inside a bar popup would be teaching a bad habit.
+attempt "a privilege escalation in code the shell loads" \
+  "sed -i 's|\"omarchy-install-and-launch\", \"EasyEffects\"|\"sudo\", \"pacman\"|' Service.qml" \
+  wiring
+
+# Reading the socket looks harmless and cannot work: get_global_bypass answers
+# with one byte and no terminator, so two replies arrive run together.
+attempt "a parser attached to the socket's unframed replies" \
+  "sed -i '0,/  Socket {/s//  Socket { parser: SplitParser { splitMarker: \"\\\\n\" } }\n\n  Socket {/' Service.qml" \
+  wiring
+
 # The importer is the only supported route into presets/, so it gets its own
 # case: a source whose preset excludes an application must arrive clean.
 echo

@@ -1,0 +1,331 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import "Model.js" as Model
+import "Presets.js" as Presets
+
+// Everything that talks to EasyEffects: the socket presets are switched over,
+// the config file that says which one is loaded, and the copying that puts the
+// bundled presets where EasyEffects will find them.
+//
+// The socket is written to and never read from. Its replies carry no framing of
+// their own, so two answers on one connection arrive run together with nothing
+// between them. Nothing is lost: the commands worth sending return no reply at
+// all, and everything worth reading is either in easyeffectsrc, which is
+// watched, or comes back properly framed from `easyeffects -b 3`.
+//
+// Nothing here runs as root. Installing EasyEffects is handed to Omarchy's own
+// installer, which does it in a terminal the user can see.
+Item {
+  id: root
+
+  property var settings: ({})
+
+  readonly property string home: Quickshell.env("HOME") || ""
+  readonly property string dataDir: home + "/.local/share/easyeffects"
+  readonly property string configPath: home + "/.config/easyeffects/db/easyeffectsrc"
+  readonly property string ledgerPath: home + "/.config/omarchy/easyeffects/installed.json"
+  readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
+
+  property string runtimeDir: ""
+  readonly property string socketPath: runtimeDir === "" ? "" : runtimeDir + "/EasyEffectsServer"
+
+  property bool binaryPresent: false
+  property bool flatpakPresent: false
+  property bool presetDirPresent: false
+  property var outputNames: []
+  property var inputNames: []
+  property var kernelsByPreset: ({})
+  property var availableKernels: []
+
+  property var ini: ({})
+  property bool bypassed: false
+  property bool probed: false
+  property string lastError: ""
+
+  // What the last sync decided about each bundled preset, so a name that was
+  // skipped or edited can say so instead of looking installed.
+  property var verdicts: ({})
+  property bool syncing: false
+
+  // The panel sets this while it is open. The bypass is the one piece of state
+  // EasyEffects will not announce, so it is asked for only while somebody is
+  // looking at it.
+  property bool watchClosely: false
+
+  readonly property string readiness: Model.readiness({
+    binary: binaryPresent,
+    flatpak: flatpakPresent,
+    presetDir: presetDirPresent,
+    socket: socket.connected
+  })
+  readonly property var readinessInfo: Model.readinessState(readiness)
+  readonly property bool loaded: probed
+
+  readonly property string activePreset: Model.activePreset(ini, "output")
+  readonly property string activeInputPreset: Model.activePreset(ini, "input")
+  readonly property string device: Model.currentDevice(ini, "output")
+  readonly property string deviceLabel: device === "" ? "" : Model.deviceLabel(device)
+
+  readonly property var presets: Model.presetRows({
+    names: outputNames,
+    catalogue: Presets.CATALOGUE,
+    active: activePreset,
+    usage: Model.usageCounts(ini, "output"),
+    kernelsByPreset: kernelsByPreset,
+    availableKernels: availableKernels
+  })
+
+  readonly property var inputPresets: Model.presetRows({
+    names: inputNames,
+    catalogue: {},
+    active: activeInputPreset,
+    usage: Model.usageCounts(ini, "input"),
+    kernelsByPreset: kernelsByPreset,
+    availableKernels: availableKernels
+  })
+
+  readonly property var view: ({
+    readiness: readiness,
+    preset: activePreset,
+    deviceLabel: deviceLabel,
+    bypassed: bypassed
+  })
+
+  // The offer to install is made once. A refusal is remembered so the widget
+  // stops asking, and it comes back on its own the moment easyeffects appears.
+  readonly property bool installDeclined: ledger.declinedInstall
+
+  function refresh() {
+    probeProcess.command = Model.probeCommand(root.dataDir)
+    probeProcess.running = true
+  }
+
+  function applyPreset(pipeline, name) {
+    var command = Model.loadPresetCommand(pipeline, name)
+    if (command === "") {
+      // Only a name past the socket's hundred characters lands here.
+      cliProcess.command = ["easyeffects", "-l", name]
+      cliProcess.running = true
+      return
+    }
+    send(command)
+  }
+
+  function setBypass(wanted) {
+    send(Model.bypassCommand(wanted))
+    root.bypassed = wanted
+    readBypass()
+  }
+
+  function toggleBypass() {
+    setBypass(!root.bypassed)
+  }
+
+  function send(line) {
+    if (!socket.connected) {
+      root.lastError = "EasyEffects is not accepting commands"
+      return
+    }
+    socket.write(line + "\n")
+    socket.flush()
+  }
+
+  function readBypass() {
+    if (!root.readinessInfo.canAct) return
+    bypassProcess.command = Model.bypassReadCommand()
+    bypassProcess.running = true
+  }
+
+  function start() {
+    startProcess.command = ["easyeffects", "--service-mode", "--hide-window"]
+    startProcess.running = true
+  }
+
+  // Escalation belongs to Omarchy's installer, in a terminal the user can see.
+  // This plugin never runs a package manager and never asks for a password.
+  function install() {
+    installProcess.command = [
+      "omarchy-install-and-launch", "EasyEffects", "easyeffects", "com.github.wwmm.easyeffects"
+    ]
+    installProcess.running = true
+  }
+
+  function declineInstall() {
+    ledger.declinedInstall = true
+    ledgerFile.writeAdapter()
+  }
+
+  function openEasyEffects() {
+    startProcess.command = ["easyeffects"]
+    startProcess.running = true
+  }
+
+  // Sync is gated on the binary existing, never on it running. With EasyEffects
+  // absent its data directory does not exist either, and creating one to hold
+  // presets for an application nobody has is litter that a later sync would
+  // have to reason about.
+  function sync() {
+    if (root.syncing || !root.readinessInfo.canSync || settings.syncPresets === false) return
+    root.syncing = true
+    hashProcess.command = Model.hashCommand(root.pluginDir, root.dataDir)
+    hashProcess.running = true
+  }
+
+  function onHashes(text) {
+    var seen = Model.parseHashes(text)
+    var plan = Presets.syncPlan(seen.bundled, seen.disk, ledger.presets || ({}))
+    root.verdicts = plan.verdicts
+    if (plan.write.length === 0) {
+      root.syncing = false
+      return
+    }
+    root.pendingWrite = plan.write
+    root.pendingHashes = seen.bundled
+    copyProcess.command = Model.copyCommand(root.pluginDir, root.dataDir, plan.write)
+    copyProcess.running = true
+  }
+
+  property var pendingWrite: []
+  property var pendingHashes: ({})
+
+  function onCopied(exitCode) {
+    root.syncing = false
+    if (exitCode !== 0) {
+      root.lastError = "the bundled presets could not be written"
+      return
+    }
+    var recorded = ledger.presets || ({})
+    for (var i = 0; i < root.pendingWrite.length; i++) {
+      var name = root.pendingWrite[i]
+      recorded[name] = root.pendingHashes[name]
+    }
+    ledger.presets = recorded
+    ledgerFile.writeAdapter()
+    root.pendingWrite = []
+    root.refresh()
+  }
+
+  function onProbed(text) {
+    var seen = Model.parseProbe(text)
+    root.runtimeDir = seen.runtimeDir
+    root.binaryPresent = seen.binary
+    root.flatpakPresent = seen.flatpak
+    root.presetDirPresent = seen.presetDir
+    root.outputNames = seen.output
+    root.inputNames = seen.input
+    root.kernelsByPreset = seen.kernels
+    root.availableKernels = seen.irs
+    root.probed = true
+    root.sync()
+  }
+
+  Component.onCompleted: refresh()
+
+  Socket {
+    id: socket
+    path: root.socketPath
+    connected: root.socketPath !== "" && root.binaryPresent
+  }
+
+  // EasyEffects writes the loaded preset and the current device here, so the
+  // panel follows a change made in its own window without being told.
+  FileView {
+    id: configFile
+    path: root.configPath
+    printErrors: false
+    watchChanges: true
+    onLoaded: root.ini = Model.parseIni(text())
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: ledgerFile
+    path: root.ledgerPath
+    printErrors: false
+    atomicWrites: true
+    onLoaded: root.sync()
+
+    JsonAdapter {
+      id: ledger
+      property var presets: ({})
+      property bool declinedInstall: false
+    }
+  }
+
+  Process {
+    id: ledgerDirProcess
+    running: true
+    command: ["sh", "-c", 'mkdir -p "$HOME/.config/omarchy/easyeffects"']
+    onExited: ledgerFile.reload()
+  }
+
+  Process {
+    id: probeProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.onProbed(text)
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) root.lastError = "EasyEffects could not be looked for"
+    }
+  }
+
+  Process {
+    id: hashProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.onHashes(text)
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
+        root.syncing = false
+        root.lastError = "the bundled presets could not be read"
+      }
+    }
+  }
+
+  Process {
+    id: copyProcess
+    onExited: function (exitCode) {
+      root.onCopied(exitCode)
+    }
+  }
+
+  Process {
+    id: bypassProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var reading = Model.bypassFromReply(text)
+        if (reading !== null) root.bypassed = reading
+      }
+    }
+  }
+
+  Process {
+    id: startProcess
+    onExited: root.refresh()
+  }
+
+  Process {
+    id: cliProcess
+  }
+
+  Process {
+    id: installProcess
+  }
+
+  // The socket appearing is how "EasyEffects has just started" arrives without
+  // anything asking repeatedly. A binary appearing on PATH does not announce
+  // itself, so a panel being opened is the other moment worth looking again.
+  Timer {
+    running: root.watchClosely
+    interval: 4000
+    repeat: true
+    onTriggered: {
+      root.refresh()
+      root.readBypass()
+    }
+  }
+}

@@ -1,0 +1,59 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: The shipped presets carry nothing personal
+        run: node test/presets.test.js
+
+      - name: The parsing and presentation rules hold
+        run: node test/model.test.js
+
+      # qmlformat parses the grammar without resolving types. qmllint would need
+      # Omarchy's shell installed to resolve every `qs.*` import, so it would
+      # answer a different question here than it does on a desktop.
+      - name: Install the Qt QML tools
+        run: sudo apt-get update && sudo apt-get install -y qt6-declarative-dev-tools
+
+      - name: The files agree with each other
+        run: PATH="/usr/lib/qt6/bin:$PATH" node test/wiring.test.js
+
+      # A check nobody has watched fail is a check nobody knows works. This
+      # breaks each invariant in turn and expects the suite to notice.
+      - name: The checks catch the breaks they exist for
+        run: PATH="/usr/lib/qt6/bin:$PATH" bash test/prove-checks.sh
+
+      # presets/ has one supported route in, so a hand-edited preset that never
+      # went through the importer is a preset nobody stripped a blocklist from.
+
+      - name: The manifest is one the shell would accept
+        run: |
+          node -e '
+            const m = require("./manifest.json")
+            if (m.schemaVersion !== 1) throw new Error("unsupported schemaVersion")
+            if (!m.id || !m.version) throw new Error("manifest is missing id or version")
+            for (const [kind, ep] of Object.entries(m.entryPoints)) {
+              if (ep.startsWith("/") || ep.includes("..")) throw new Error("unsafe entry point: " + ep)
+            }
+            console.log(m.id, m.version)
+          '
+
+      # Installing EasyEffects needs root and this plugin never takes it. The
+      # offer goes to Omarchy's installer, which escalates in a visible terminal.
+      - name: Nothing the shell loads escalates privileges
+        run: |
+          if grep -nE '\b(sudo|pkexec|doas|pacman)\b' Panel.qml Service.qml Model.js Presets.js; then
+            echo "::error::Escalation belongs to omarchy-install-and-launch, not to code the shell loads."
+            exit 1
+          fi
+          echo "nothing the capability scan would flag"
