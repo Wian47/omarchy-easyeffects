@@ -62,8 +62,23 @@ Item {
   readonly property var readinessInfo: Model.readinessState(readiness)
   readonly property bool loaded: probed
 
-  readonly property string activePreset: Model.activePreset(ini, "output")
-  readonly property string activeInputPreset: Model.activePreset(ini, "input")
+  // Three sources, in falling order of trust. What was just asked for, because
+  // nothing is faster than knowing. What the running instance says, asked over
+  // the command line. What the config file says, which is a lazy write and can
+  // name a preset that was replaced minutes ago, so it is only a starting guess
+  // before the first reading comes back.
+  property string chosenOutput: ""
+  property string chosenInput: ""
+  property string readOutput: ""
+  property string readInput: ""
+
+  readonly property string filedOutput: Model.activePreset(ini, "output")
+  readonly property string filedInput: Model.activePreset(ini, "input")
+
+  readonly property string activePreset: chosenOutput !== "" ? chosenOutput
+    : (readOutput !== "" ? readOutput : filedOutput)
+  readonly property string activeInputPreset: chosenInput !== "" ? chosenInput
+    : (readInput !== "" ? readInput : filedInput)
   readonly property string device: Model.currentDevice(ini, "output")
   readonly property string deviceLabel: device === "" ? "" : Model.deviceLabel(device)
 
@@ -102,6 +117,9 @@ Item {
   }
 
   function applyPreset(pipeline, name) {
+    if (pipeline === "input") root.chosenInput = name
+    else root.chosenOutput = name
+    confirmActive.restart()
     var command = Model.loadPresetCommand(pipeline, name)
     if (command === "") {
       // Only a name past the socket's hundred characters lands here.
@@ -129,6 +147,12 @@ Item {
     }
     socket.write(line + "\n")
     socket.flush()
+  }
+
+  function readActive() {
+    if (!root.readinessInfo.canAct) return
+    activeProcess.command = Model.activePresetCommand()
+    activeProcess.running = true
   }
 
   function readBypass() {
@@ -236,7 +260,10 @@ Item {
     printErrors: false
     watchChanges: true
     onLoaded: root.ini = Model.parseIni(text())
-    onFileChanged: reload()
+    onFileChanged: {
+      reload()
+      root.readActive()
+    }
   }
 
   FileView {
@@ -293,6 +320,28 @@ Item {
   }
 
   Process {
+    id: activeProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var seen = Model.parseActivePresets(text)
+        root.readOutput = seen.output
+        root.readInput = seen.input
+        if (root.chosenOutput === seen.output) root.chosenOutput = ""
+        if (root.chosenInput === seen.input) root.chosenInput = ""
+      }
+    }
+  }
+
+  // EasyEffects takes a moment to swap a chain, so the reading that retires an
+  // optimistic name is taken shortly after asking rather than immediately.
+  Timer {
+    id: confirmActive
+    interval: 600
+    onTriggered: root.readActive()
+  }
+
+  Process {
     id: bypassProcess
     stdout: StdioCollector {
       waitForEnd: true
@@ -326,6 +375,7 @@ Item {
     onTriggered: {
       root.refresh()
       root.readBypass()
+      root.readActive()
     }
   }
 }

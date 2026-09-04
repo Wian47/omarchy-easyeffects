@@ -397,3 +397,24 @@ function copyCommand(pluginDir, dataDir, names) {
     'done'
   ].join("\n"), "sh", pluginDir, dataDir].concat(names)
 }
+
+// EasyEffects writes lastLoadedOutputPreset into its config lazily, so the file
+// can name a preset that was replaced minutes ago. Measured: the file said
+// "Dolby Atmos" while the running instance had loaded something else. The
+// command line answers from the instance and frames its answer with a newline.
+function activePresetCommand() {
+  return ["sh", "-c", [
+    'printf "output\\t%s\\n" "$(easyeffects -a output 2>/dev/null)"',
+    'printf "input\\t%s\\n" "$(easyeffects -a input 2>/dev/null)"'
+  ].join("\n")]
+}
+
+function parseActivePresets(text) {
+  var out = { output: "", input: "" }
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var fields = lines[i].split("\t")
+    if (fields[0] === "output" || fields[0] === "input") out[fields[0]] = fields[1] || ""
+  }
+  return out
+}

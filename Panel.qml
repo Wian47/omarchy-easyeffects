@@ -65,7 +65,72 @@ Panel {
     if (opened) {
       ee.refresh()
       ee.readBypass()
+      ee.readActive()
+      return
     }
+    // Cleared on the way out, not on the way in. A panel opened under a
+    // stationary pointer has already had its enter event by this point, and
+    // clearing here would leave nothing highlighted until the mouse moved.
+    root.cursorActive = false
+    root.selectedIndex = -1
+  }
+
+  // One cursor, shared by the mouse and the keyboard. CursorSurface is explicit
+  // that a row must not colour itself from its own containsMouse: the highlight
+  // is owned here so exactly one row carries it, however it was reached. Rows
+  // never clear it on leave either, which is what stops the entered row's
+  // highlight being wiped by the left row's event arriving second.
+  property bool cursorActive: false
+  property string focusSection: "output"
+  property int selectedIndex: -1
+
+  readonly property var navigable: {
+    var out = []
+    for (var i = 0; i < presets.length; i++) out.push({ section: "output", index: i })
+    for (var j = 0; j < inputPresets.length; j++) out.push({ section: "input", index: j })
+    return out
+  }
+
+  readonly property var selectedRow: {
+    var rows = focusSection === "input" ? inputPresets : presets
+    if (!cursorActive || selectedIndex < 0 || selectedIndex >= rows.length) return null
+    return rows[selectedIndex]
+  }
+
+  // The description belongs to one fixed strip rather than to the rows. A row
+  // that grows to hold it pushes every row below it down, so the list moves
+  // under the pointer and what was aimed at has gone by the time it is clicked.
+  readonly property string describedText: {
+    if (selectedRow) return captionFor(selectedRow)
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i].name === view.preset) return captionFor(presets[i])
+    }
+    return ""
+  }
+
+  function placeCursor(section, index) {
+    cursorActive = true
+    focusSection = section
+    selectedIndex = index
+  }
+
+  function moveCursor(step) {
+    if (navigable.length === 0 || step === 0) return
+    if (!cursorActive) {
+      placeCursor(navigable[0].section, navigable[0].index)
+      return
+    }
+    var at = -1
+    for (var i = 0; i < navigable.length; i++) {
+      if (navigable[i].section === focusSection && navigable[i].index === selectedIndex) at = i
+    }
+    var next = Math.max(0, Math.min(navigable.length - 1, (at < 0 ? 0 : at) + step))
+    placeCursor(navigable[next].section, navigable[next].index)
+  }
+
+  function activateCursor() {
+    if (!selectedRow || !ee || !eeState.canAct) return
+    ee.applyPreset(focusSection, selectedRow.name)
   }
 
   function handleBarPress(buttonCode) {
@@ -96,12 +161,13 @@ Panel {
     required property var entry
     required property string pipeline
 
-    readonly property string caption: root.captionFor(entry)
+    required property int rowIndex
+
     readonly property string status: root.statusFor(entry)
     readonly property bool warned: entry.missingKernels.length > 0
-    readonly property bool expanded: rowMouse.containsMouse && caption !== ""
 
     current: entry.active
+    hasCursor: root.cursorActive && root.focusSection === pipeline && root.selectedIndex === rowIndex
     foreground: root.foreground
     implicitHeight: rowContent.implicitHeight + Style.spacing.rowPaddingX
 
@@ -109,9 +175,9 @@ Panel {
       id: rowMouse
       anchors.fill: parent
       hoverEnabled: true
-      enabled: root.eeState.canAct
-      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: if (root.ee) root.ee.applyPreset(presetRow.pipeline, presetRow.entry.name)
+      cursorShape: root.eeState.canAct ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onContainsMouseChanged: if (containsMouse) root.placeCursor(presetRow.pipeline, presetRow.rowIndex)
+      onClicked: if (root.ee && root.eeState.canAct) root.ee.applyPreset(presetRow.pipeline, presetRow.entry.name)
     }
 
     Item {
@@ -171,19 +237,6 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
           }
-        }
-
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          visible: presetRow.expanded
-          text: presetRow.caption
-          color: root.dim
-          wrapMode: Text.WordWrap
-          maximumLineCount: 2
-          elide: Text.ElideRight
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
         }
       }
     }
@@ -247,6 +300,8 @@ Panel {
 
       onCloseRequested: root.close()
       onTabRequested: function (direction) { root.switchPanel(direction) }
+      onMoveRequested: function (dx, dy) { root.moveCursor(dy) }
+      onActivateRequested: root.activateCursor()
       onTextKey: function (text) {
         if ((text === "b" || text === "B") && root.ee && root.eeState.canAct) root.ee.toggleBypass()
       }
@@ -327,13 +382,37 @@ Panel {
           visible: root.presets.length > 0
         }
 
+        // Fixed height whether it holds one line, two, or none, so nothing
+        // below it moves as the pointer travels down the list.
+        Item {
+          width: parent.width
+          visible: root.presets.length > 0
+          implicitHeight: Style.space(28)
+
+          Text {
+            textFormat: Text.PlainText
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.describedText
+            color: root.dim
+            wrapMode: Text.WordWrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
         Repeater {
           model: root.presets
 
           PresetRow {
             required property var modelData
+            required property int index
             width: column.width
             entry: modelData
+            rowIndex: index
             pipeline: "output"
           }
         }
@@ -357,8 +436,10 @@ Panel {
 
           PresetRow {
             required property var modelData
+            required property int index
             width: column.width
             entry: modelData
+            rowIndex: index
             pipeline: "input"
           }
         }
