@@ -57,7 +57,7 @@ attempt "a description that does not say what the preset is for" \
   "sed -i '0,/    use: \"/s//    use: \"x\", ignored: \"/' Presets.js"
 
 attempt "a preset carrying the device it was made on" \
-  "sed -i '0,/\"blocklist\": \\[\\]/s//\"blocklist\": [\"bluez_output.34_09_C9_99_88_8A.1\"]/' 'presets/output/Laptop.json'"
+  "sed -i '0,/\"blocklist\": \\[\\]/s//\"blocklist\": [\"bluez_output.AA_BB_CC_11_22_33.1\"]/' 'presets/output/Laptop.json'"
 
 attempt "a preset carrying an absolute path from its author's machine" \
   "sed -i '0,/\"mode\": \"IIR\"/s//\"mode\": \"\\/home\\/someone\\/kernel\"/' 'presets/output/Laptop.json'"

@@ -118,7 +118,7 @@ A preset's name is its filename. There is no name field inside the JSON.
 lastLoadedOutputPreset=Bass Enhancing + Perfect EQ - Low Latency
 
 [StreamOutputs]
-outputDevice=bluez_output.34_09_C9_99_88_8A.1
+outputDevice=bluez_output.AA_BB_CC_11_22_33.1
 blocklist=Spotify
 usedPresets=Perfect EQ:11,Bass Boosted:8,...
 ```

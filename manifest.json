@@ -22,7 +22,7 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "barLabel": "preset",
+      "barLabel": "none",
       "syncPresets": true,
       "hideWhenUnavailable": false
     },
@@ -36,8 +36,8 @@
           "preset",
           "device"
         ],
-        "defaultValue": "preset",
-        "description": "Show the active preset or the output device it is playing through. Vertical bars stay icon-only."
+        "defaultValue": "none",
+        "description": "Nothing beside the icon, the active preset, or the output device it is playing through. Vertical bars stay icon-only."
       },
       {
         "key": "syncPresets",

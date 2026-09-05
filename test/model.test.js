@@ -37,12 +37,12 @@ const EASYEFFECTSRC = [
   "lastLoadedOutputPreset=Bass Enhancing + Perfect EQ - Low Latency",
   "",
   "[StreamInputs]",
-  "inputDevice=bluez_input.34:09:C9:99:88:8A",
+  "inputDevice=bluez_input.AA:BB:CC:11:22:33",
   "visiblePage=pluginsPage",
   "",
   "[StreamOutputs]",
   "blocklist=Spotify",
-  "outputDevice=bluez_output.34_09_C9_99_88_8A.1",
+  "outputDevice=bluez_output.AA_BB_CC_11_22_33.1",
   "usedPresets=Perfect EQ:11,Bass Enhancing + Perfect EQ:16,Bass Boosted:8",
   "visiblePlugin=equalizer#0",
   ""
@@ -51,7 +51,7 @@ const EASYEFFECTSRC = [
 const PACTL_SINKS = [
   "82\teasyeffects_sink\tPipeWire\tfloat32le 2ch 48000Hz\tRUNNING",
   "5331\talsa_output.pci-0000_05_00.6.HiFi__Speaker__sink\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED",
-  "5384\tbluez_output.34_09_C9_99_88_8A.1\tPipeWire\ts16le 2ch 48000Hz\tRUNNING"
+  "5384\tbluez_output.AA_BB_CC_11_22_33.1\tPipeWire\ts16le 2ch 48000Hz\tRUNNING"
 ].join("\n")
 
 test("readiness names every state it can be in", () => {
@@ -109,8 +109,8 @@ test("the ini yields the active preset and the device", () => {
   const ini = Model.parseIni(EASYEFFECTSRC)
   assert.strictEqual(Model.activePreset(ini, "output"), "Bass Enhancing + Perfect EQ - Low Latency")
   assert.strictEqual(Model.activePreset(ini, "input"), "")
-  assert.strictEqual(Model.currentDevice(ini, "output"), "bluez_output.34_09_C9_99_88_8A.1")
-  assert.strictEqual(Model.currentDevice(ini, "input"), "bluez_input.34:09:C9:99:88:8A")
+  assert.strictEqual(Model.currentDevice(ini, "output"), "bluez_output.AA_BB_CC_11_22_33.1")
+  assert.strictEqual(Model.currentDevice(ini, "input"), "bluez_input.AA:BB:CC:11:22:33")
 })
 
 test("a value containing an equals sign survives parsing", () => {
@@ -164,7 +164,7 @@ test("the sink list drops EasyEffects' own loopback", () => {
   const sinks = Model.sinksFrom(PACTL_SINKS)
   assert.deepStrictEqual(sinks.map(s => s.name), [
     "alsa_output.pci-0000_05_00.6.HiFi__Speaker__sink",
-    "bluez_output.34_09_C9_99_88_8A.1"
+    "bluez_output.AA_BB_CC_11_22_33.1"
   ])
   assert.strictEqual(sinks[0].label, "Speaker")
   assert.strictEqual(sinks[1].label, "Bluetooth")

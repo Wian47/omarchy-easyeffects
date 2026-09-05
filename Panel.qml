@@ -42,7 +42,7 @@ Panel {
   readonly property string serviceError: ee ? ee.lastError : ""
 
   readonly property var view: ee ? ee.view : ({ readiness: "absent", preset: "", deviceLabel: "", bypassed: false })
-  readonly property string labelMode: vertical ? "none" : String(setting("barLabel", "preset"))
+  readonly property string labelMode: vertical ? "none" : String(setting("barLabel", "none"))
   readonly property string barLabel: Model.barLabel(view, labelMode)
   readonly property string barTooltip: Model.barTooltip(view)
 
