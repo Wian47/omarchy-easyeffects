@@ -129,6 +129,13 @@ attempt "a privilege escalation in code the shell loads" \
   "sed -i 's|\"omarchy-install-and-launch\", \"EasyEffects\"|\"sudo\", \"pacman\"|' Service.qml" \
   wiring
 
+# EasyEffects keys an autoload file on the route's description, not its name.
+# Named after the name, the file is never found, and the lookup logs nothing
+# when it misses, so the only symptom is that autoload quietly does nothing.
+attempt "an autoload file named after the route's name instead of its description" \
+  "sed -i 's|current.ports\\[port.slice(0, split)\\] = port.slice(split + 2)|current.ports[port.slice(0, split)] = port.slice(0, split)|' Model.js" \
+  "node test/model.test.js"
+
 # A binding on Socket.connected is the shape of the bug that made the start
 # button useless: Quickshell writes the property back to false when a connect
 # fails, the binding dies with it, and nothing ever tries again.

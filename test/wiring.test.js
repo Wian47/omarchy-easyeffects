@@ -166,7 +166,7 @@ test("the socket connection is driven and never bound", () => {
 })
 
 test("the shell commands read only what they say they read", () => {
-  const allowed = /^(set|echo|command|printf|grep|sed|for|do|done|while|if|then|fi|cp|mv|mkdir|shift|sha256sum|cut|read|n=|P=|D=|R=|k=|f=|\[|\]|easyeffects|sh|omarchy-install-and-launch)/
+  const allowed = /^(set|echo|command|printf|grep|sed|for|do|done|while|if|then|fi|cp|mv|mkdir|shift|sha256sum|cut|read|head|rm|pactl|n=|P=|D=|R=|B=|F=|p=|d=|r=|k=|f=|\[|\]|easyeffects|sh|omarchy-install-and-launch)/
   for (const line of model.split("\n")) {
     const inShell = line.match(/^\s*'(.+)',?$/)
     if (!inShell) continue

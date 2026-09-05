@@ -48,10 +48,43 @@ const EASYEFFECTSRC = [
   ""
 ].join("\n")
 
-const PACTL_SINKS = [
-  "82\teasyeffects_sink\tPipeWire\tfloat32le 2ch 48000Hz\tRUNNING",
-  "5331\talsa_output.pci-0000_05_00.6.HiFi__Speaker__sink\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED",
-  "5384\tbluez_output.AA_BB_CC_11_22_33.1\tPipeWire\ts16le 2ch 48000Hz\tRUNNING"
+// Trimmed from real `pactl list sinks` and `pactl list sources` output. The
+// indentation is load-bearing: ports are indented one level deeper than the
+// fields around them, which is how the parser knows where the port list ends.
+const PACTL_DEVICES = [
+  "@@output",
+  "Sink #82",
+  "\tState: RUNNING",
+  "\tName: easyeffects_sink",
+  "\tDescription: EasyEffects Sink",
+  "Sink #5331",
+  "\tState: SUSPENDED",
+  "\tName: alsa_output.pci-0000_05_00.6.HiFi__Speaker__sink",
+  "\tDescription: Ryzen HD Audio Controller Speaker",
+  "\tPorts:",
+  "\t\tSpeaker: Speaker (type: Speaker, priority: 100, availability unknown)",
+  "\t\tHeadphones: Headphones (type: Headphones, priority: 200, not available)",
+  "\tActive Port: Speaker",
+  "\tFormats:",
+  "\t\tpcm",
+  "Sink #5384",
+  "\tState: RUNNING",
+  "\tName: bluez_output.AA_BB_CC_11_22_33.1",
+  "\tDescription: soundcore P31i",
+  "\tPorts:",
+  "\t\theadset-output: Headphones (type: Headset, priority: 0, available)",
+  "\tActive Port: headset-output",
+  "@@input",
+  "Source #83",
+  "\tName: alsa_output.pci-0000_05_00.6.HiFi__Speaker__sink.monitor",
+  "\tDescription: Monitor of Speaker",
+  "Source #5390",
+  "\tName: alsa_input.pci-0000_05_00.6.HiFi__Mic1__source",
+  "\tDescription: Ryzen HD Audio Controller Digital Microphone",
+  "\tPorts:",
+  "\t\tMic1: Digital Microphone (type: Mic, priority: 100, availability unknown)",
+  "\tActive Port: Mic1",
+  ""
 ].join("\n")
 
 test("readiness names every state it can be in", () => {
@@ -160,14 +193,112 @@ test("a shipped kernel stops a preset reporting it as missing", () => {
   assert.deepStrictEqual(rows[0].missingKernels, [])
 })
 
-test("the sink list drops EasyEffects' own loopback", () => {
-  const sinks = Model.sinksFrom(PACTL_SINKS)
-  assert.deepStrictEqual(sinks.map(s => s.name), [
+test("the device list drops EasyEffects' own loopback and the monitors", () => {
+  const devices = Model.parseDevices(PACTL_DEVICES)
+  assert.deepStrictEqual(devices.map(d => d.name), [
     "alsa_output.pci-0000_05_00.6.HiFi__Speaker__sink",
-    "bluez_output.AA_BB_CC_11_22_33.1"
+    "bluez_output.AA_BB_CC_11_22_33.1",
+    "alsa_input.pci-0000_05_00.6.HiFi__Mic1__source"
   ])
-  assert.strictEqual(sinks[0].label, "Speaker")
-  assert.strictEqual(sinks[1].label, "Bluetooth")
+  assert.deepStrictEqual(devices.map(d => d.pipeline), ["output", "output", "input"])
+})
+
+// The whole feature turns on this one field. EasyEffects names an autoload file
+// after the route's description and a file named after the route's name is
+// never found, with nothing logged either way.
+test("a device carries the route description, never the route name", () => {
+  const devices = Model.parseDevices(PACTL_DEVICES)
+  const bluetooth = devices.find(d => d.name.indexOf("bluez_") === 0)
+  assert.strictEqual(bluetooth.route, "Headphones")
+  assert.notStrictEqual(bluetooth.route, "headset-output")
+  assert.strictEqual(bluetooth.description, "soundcore P31i")
+  assert.strictEqual(devices[0].route, "Speaker", "the active port decides, not the first one listed")
+})
+
+test("the autoload file is named the way EasyEffects names it", () => {
+  assert.strictEqual(
+    Model.autoloadFileName("bluez_output.AA_BB_CC_11_22_33.1", "Headphones"),
+    "bluez_output.AA_BB_CC_11_22_33.1:Headphones.json")
+  assert.strictEqual(Model.autoloadFileName("a/b", "c/d"), "a_b:c_d.json",
+    "PipeWire puts slashes in route descriptions and EasyEffects replaces them")
+  assert.strictEqual(Model.autoloadFileName("dev", ""), "dev:.json",
+    "a device with no route still has a name EasyEffects looks for")
+})
+
+test("the autoload body carries the keys EasyEffects writes", () => {
+  const body = JSON.parse(Model.autoloadBody("dev", "A Device", "Headphones", "Perfect EQ"))
+  assert.deepStrictEqual(Object.keys(body), ["device", "device-description", "device-profile", "preset-name"])
+  assert.strictEqual(body["preset-name"], "Perfect EQ")
+  assert.strictEqual(body["device-profile"], "Headphones")
+  assert.ok(Model.autoloadBody("d", "D", "R", 'a "quoted" name').indexOf('\\"quoted\\"') !== -1,
+    "a name with quotes in it is escaped, not pasted in")
+})
+
+// Eleven devices with the presets under them is a popup nobody can read. Only
+// the one in use and the ones already spoken for earn a row.
+test("the autoload list shows the device in use and every rule, and nothing else", () => {
+  const devices = Model.parseDevices(PACTL_DEVICES)
+  const rows = Model.autoloadRows({
+    devices: devices,
+    rules: {
+      output: { "alsa_output.pci-0000_05_00.6.HiFi__Speaker__sink:Speaker.json": { preset: "Laptop", description: "Speakers" } },
+      input: {}
+    },
+    currentOutput: "bluez_output.AA_BB_CC_11_22_33.1",
+    currentInput: "",
+    pipelines: ["output"]
+  })
+  assert.deepStrictEqual(rows.map(r => r.label), [
+    "soundcore P31i (Headphones)",
+    "Ryzen HD Audio Controller Speaker"
+  ])
+  assert.strictEqual(rows[0].current, true, "the device in use comes first, rule or no rule")
+  assert.strictEqual(rows[0].bound, false)
+  assert.strictEqual(rows[1].bound, true)
+  assert.strictEqual(rows[1].preset, "Laptop")
+  assert.strictEqual(rows[1].fileName, "alsa_output.pci-0000_05_00.6.HiFi__Speaker__sink:Speaker.json")
+  assert.strictEqual(rows[1].label.indexOf("(Speaker)"), -1,
+    "a description that already says the route does not say it twice")
+})
+
+test("a rule for a device that is not connected is still shown and still removable", () => {
+  const rows = Model.autoloadRows({
+    devices: [],
+    rules: { output: { "gone:Headphones.json": { preset: "Perfect EQ", description: "Some Headset", route: "Headphones" } }, input: {} },
+    currentOutput: "",
+    pipelines: ["output"]
+  })
+  assert.strictEqual(rows.length, 1)
+  assert.strictEqual(rows[0].live, false, "nothing on the machine matches it")
+  assert.strictEqual(rows[0].bound, true)
+  assert.strictEqual(rows[0].label, "Some Headset (Headphones)", "it describes itself from what was written")
+  assert.strictEqual(rows[0].description, "Some Headset", "the device's own description, without the route glued on")
+  assert.strictEqual(rows[0].fileName, "gone:Headphones.json")
+})
+
+test("input devices are only listed when the pipeline is asked for", () => {
+  const devices = Model.parseDevices(PACTL_DEVICES)
+  const shared = { devices: devices, rules: { output: {}, input: {} }, currentOutput: "", currentInput: "alsa_input.pci-0000_05_00.6.HiFi__Mic1__source" }
+  assert.strictEqual(Model.autoloadRows(Object.assign({ pipelines: ["output"] }, shared)).length, 0)
+  const both = Model.autoloadRows(Object.assign({ pipelines: ["output", "input"] }, shared))
+  assert.deepStrictEqual(both.map(r => r.pipeline), ["input"])
+})
+
+test("the rules a probe found are keyed by the file EasyEffects looks for", () => {
+  const seen = Model.parseProbe([
+    "runtime=/run/user/1000",
+    "binary=1",
+    "rule\toutput\tbluez_output.X:Headphones.json\tPerfect EQ\tsoundcore P31i\tHeadphones",
+    "rule\tinput\tmic:Analog.json\tVoice\tA Microphone\tAnalog",
+    "@@devices",
+    "@@output",
+    ""
+  ].join("\n"))
+  assert.deepStrictEqual(seen.rules.output, {
+    "bluez_output.X:Headphones.json": { preset: "Perfect EQ", description: "soundcore P31i", route: "Headphones" }
+  })
+  assert.strictEqual(seen.rules.input["mic:Analog.json"].preset, "Voice")
+  assert.deepStrictEqual(seen.devices, [], "the marker separates the two halves")
 })
 
 test("the bar label holds its width whatever it is showing", () => {

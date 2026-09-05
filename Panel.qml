@@ -39,6 +39,9 @@ Panel {
   readonly property var presets: ee ? ee.presets : []
   readonly property var inputPresets: ee ? ee.inputPresets : []
   readonly property var verdicts: ee ? ee.verdicts : ({})
+  // Autoload writes into EasyEffects' own directory, so the same gate that
+  // stops presets being copied for an application nobody has stops this too.
+  readonly property var devices: ee && eeState.canSync ? ee.autoloadRows : []
   readonly property string serviceError: ee ? ee.lastError : ""
 
   readonly property var view: ee ? ee.view : ({ readiness: "absent", preset: "", deviceLabel: "", bypassed: false })
@@ -88,11 +91,18 @@ Panel {
     var out = []
     for (var i = 0; i < presets.length; i++) out.push({ section: "output", index: i })
     for (var j = 0; j < inputPresets.length; j++) out.push({ section: "input", index: j })
+    for (var k = 0; k < devices.length; k++) out.push({ section: "devices", index: k })
     return out
   }
 
+  function rowsIn(section) {
+    if (section === "input") return inputPresets
+    if (section === "devices") return devices
+    return presets
+  }
+
   readonly property var selectedRow: {
-    var rows = focusSection === "input" ? inputPresets : presets
+    var rows = rowsIn(focusSection)
     if (!cursorActive || selectedIndex < 0 || selectedIndex >= rows.length) return null
     return rows[selectedIndex]
   }
@@ -101,7 +111,7 @@ Panel {
   // that grows to hold it pushes every row below it down, so the list moves
   // under the pointer and what was aimed at has gone by the time it is clicked.
   readonly property string describedText: {
-    if (selectedRow) return captionFor(selectedRow)
+    if (selectedRow) return focusSection === "devices" ? deviceCaptionFor(selectedRow) : captionFor(selectedRow)
     for (var i = 0; i < presets.length; i++) {
       if (presets[i].name === view.preset) return captionFor(presets[i])
     }
@@ -129,8 +139,33 @@ Panel {
   }
 
   function activateCursor() {
-    if (!selectedRow || !ee || !eeState.canAct) return
+    if (!selectedRow || !ee) return
+    if (focusSection === "devices") { toggleAutoload(selectedRow); return }
+    if (!eeState.canAct) return
     ee.applyPreset(focusSection, selectedRow.name)
+  }
+
+  // One click, two outcomes, and never a third. A bound device unbinds, an
+  // unbound one takes whatever is playing now. Changing which preset a device
+  // loads is unbind then bind, which is two clicks and no hidden state, rather
+  // than a control whose meaning depends on what it is already set to.
+  function toggleAutoload(row) {
+    if (!ee) return
+    if (row.bound) { ee.removeAutoload(row.pipeline, row.fileName); return }
+    if (!row.live) return
+    ee.setAutoload(row.pipeline, row.device, row.description, row.route, presetFor(row.pipeline))
+  }
+
+  function presetFor(pipeline) {
+    return pipeline === "input" ? (ee ? ee.activeInputPreset : "") : (ee ? ee.activePreset : "")
+  }
+
+  function deviceCaptionFor(row) {
+    if (row.bound && !row.live) return "Loads " + row.preset + ". Not connected right now. Click to remove."
+    if (row.bound) return "Loads " + row.preset + " whenever this device is in use. Click to remove."
+    var preset = presetFor(row.pipeline)
+    if (preset === "") return "Load a preset first, then this device can remember it."
+    return "Click to load " + preset + " automatically whenever this device is in use."
   }
 
   function handleBarPress(buttonCode) {
@@ -153,6 +188,83 @@ Panel {
     return entry.description.caution
       ? entry.description.summary + " " + entry.description.caution
       : entry.description.summary
+  }
+
+  component DeviceRow: CursorSurface {
+    id: deviceRow
+
+    required property var entry
+    required property int rowIndex
+
+    current: entry.bound
+    hasCursor: root.cursorActive && root.focusSection === "devices" && root.selectedIndex === rowIndex
+    foreground: root.foreground
+    implicitHeight: deviceContent.implicitHeight + Style.spacing.rowPaddingX
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: deviceRow.entry.bound || deviceRow.entry.live ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onContainsMouseChanged: if (containsMouse) root.placeCursor("devices", deviceRow.rowIndex)
+      onClicked: root.toggleAutoload(deviceRow.entry)
+    }
+
+    Item {
+      id: deviceContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(10)
+      anchors.rightMargin: Style.space(10)
+      implicitHeight: Math.max(deviceIcon.implicitHeight, deviceLabels.implicitHeight)
+
+      Text {
+        id: deviceIcon
+        textFormat: Text.PlainText
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        text: deviceRow.entry.glyph
+        color: root.foreground
+        opacity: deviceRow.entry.bound ? 1.0 : 0.4
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.heading
+      }
+
+      Item {
+        id: deviceLabels
+        anchors.left: deviceIcon.right
+        anchors.leftMargin: Style.space(10)
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        implicitHeight: Math.max(deviceName.implicitHeight, devicePreset.implicitHeight)
+
+        Text {
+          id: deviceName
+          textFormat: Text.PlainText
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.max(0, parent.width - (devicePreset.visible ? devicePreset.implicitWidth + Style.space(8) : 0))
+          text: deviceRow.entry.label
+          color: root.foreground
+          opacity: deviceRow.entry.live ? 1.0 : 0.55
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          elide: Text.ElideRight
+        }
+
+        Text {
+          id: devicePreset
+          textFormat: Text.PlainText
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          visible: deviceRow.entry.bound
+          text: deviceRow.entry.preset
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+    }
   }
 
   component PresetRow: CursorSurface {
@@ -292,7 +404,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(560))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(720))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -441,6 +553,32 @@ Panel {
             entry: modelData
             rowIndex: index
             pipeline: "input"
+          }
+        }
+
+        PanelSeparator {
+          width: parent.width
+          foreground: root.foreground
+          visible: root.devices.length > 0
+        }
+
+        PanelSectionHeader {
+          width: parent.width
+          text: "Load automatically"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: root.devices.length > 0
+        }
+
+        Repeater {
+          model: root.devices
+
+          DeviceRow {
+            required property var modelData
+            required property int index
+            width: column.width
+            entry: modelData
+            rowIndex: index
           }
         }
 

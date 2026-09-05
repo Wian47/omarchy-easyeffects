@@ -39,6 +39,15 @@ preset is loaded, a crossed circle when bypass is on, a stop sign when
 EasyEffects is installed but not running, a download arrow when it is not
 installed at all.
 
+Under the presets, **Load automatically** binds a preset to a device. Click the
+device and it will load whatever preset is playing now, every time you switch
+back to it. Click again to unbind. It lists the device you are using plus every
+device you have already bound, which is two or three rows rather than the
+eleven sinks and sources a machine typically has.
+
+This writes into EasyEffects' own autoload directory, so the rules show up in
+its Autoload tab and it is EasyEffects, not this plugin, that loads them.
+
 The popup lists **output presets** and **input presets** separately, yours
 alongside the bundled ones, ordered by how often you have used them. The
 highlighted row explains itself in a fixed line above the list, so the list
@@ -118,15 +127,15 @@ yourself is never touched.
 
 Stated plainly, because these were scoped and are not done:
 
-- **Per-device autoload.** EasyEffects can load a preset per output device.
-  The on-disk format is understood, but I could not make the daemon act on a
-  file I wrote (v8.2.8, no `autoload` lines in `--debug` output at all), so
-  there is no Devices section in the popup and the plugin writes nothing there.
 - **No bundled input presets.** Input presets are listed and switchable; the
   ten shipped ones are all output.
 - **No conflict warning** when Omarchy's own speaker tuning is active.
 - **No per-preset removal**, and no "re-check bundled presets" button. Deleting
   a preset means deleting the file and the ledger entry.
+- **Autoload has no fallback preset.** EasyEffects can load one preset for every
+  device you have not named. That is a setting in its own window, not here.
+- **The popup does not scroll.** Enough presets and the list runs past the
+  bottom of the card.
 - **Flatpak EasyEffects is unsupported.** It keeps its presets and socket
   somewhere else and none of that has been tested. The popup says so rather
   than half-working.

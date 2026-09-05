@@ -233,17 +233,87 @@ function presetRows(input) {
 
 // EasyEffects' own sink is the loopback this plugin's effects come out of.
 // Binding a preset to it, or offering it as an output, means nothing.
-function sinksFrom(text) {
-  var sinks = []
+// The devices EasyEffects can autoload for, read out of `pactl list`.
+//
+// The route description is the part that matters and the part that is easy to
+// get wrong. EasyEffects keys an autoload file on the route's *description*,
+// "Headphones", not its name, "headset-output". A file named after the route
+// name is never found, and because the lookup logs nothing when it misses,
+// nothing says so. Both come out of the same stanza, so read the right one.
+function parseDevices(text) {
+  var devices = []
+  var pipeline = ""
+  var current = null
+
+  function flush() {
+    if (!current || current.name === "") return
+    if (current.name.indexOf("easyeffects_") !== 0 && !/\.monitor$/.test(current.name)) {
+      devices.push({
+        pipeline: current.pipeline,
+        name: current.name,
+        route: own(current.ports, current.activePort) || "",
+        description: current.description || current.name
+      })
+    }
+    current = null
+  }
+
   var lines = String(text || "").split("\n")
   for (var i = 0; i < lines.length; i++) {
-    var fields = lines[i].split("\t")
-    if (fields.length < 2) continue
-    var name = fields[1]
-    if (!name || name.indexOf("easyeffects_") === 0) continue
-    sinks.push({ name: name, glyph: deviceGlyph(name), label: deviceLabel(name) })
+    var line = lines[i]
+    if (line === "@@output" || line === "@@input") {
+      flush()
+      pipeline = line.slice(2)
+      continue
+    }
+    if (/^(Sink|Source) #/.test(line)) {
+      flush()
+      current = { pipeline: pipeline, name: "", description: "", activePort: "", ports: {}, inPorts: false }
+      continue
+    }
+    if (!current) continue
+
+    var name = line.match(/^\s+Name: (.*)$/)
+    if (name) { current.name = name[1]; current.inPorts = false; continue }
+    var description = line.match(/^\s+Description: (.*)$/)
+    if (description) { current.description = description[1]; current.inPorts = false; continue }
+    var active = line.match(/^\s+Active Port: (.*)$/)
+    if (active) { current.activePort = active[1]; current.inPorts = false; continue }
+    if (/^\s+Ports:\s*$/.test(line)) { current.inPorts = true; continue }
+
+    if (current.inPorts && /^\t\t/.test(line)) {
+      // "headset-output: Headphones (type: Headset, priority: 0, available)"
+      // The trailing bracket is the only part with a fixed shape, so it is what
+      // gets removed rather than what gets matched.
+      var port = line.trim().replace(/\s*\([^()]*\)\s*$/, "")
+      var split = port.indexOf(": ")
+      if (split > 0) current.ports[port.slice(0, split)] = port.slice(split + 2)
+      continue
+    }
+    if (/^\s/.test(line) && !/^\t\t/.test(line)) current.inPorts = false
   }
-  return sinks
+  flush()
+  return devices
+}
+
+// The name EasyEffects computes for an autoload file, from its own source:
+// device name, a colon, the route description, ".json", with slashes replaced
+// because PipeWire puts them in route descriptions. Getting this wrong is
+// silent, so it is one function and both writing and removing use it.
+function autoloadFileName(device, route) {
+  return String(device).replace(/\//g, "_") + ":" + String(route || "").replace(/\//g, "_") + ".json"
+}
+
+// The four keys EasyEffects writes. It only reads preset-name itself, but its
+// own autoload list shows the other three, so a rule this plugin wrote is a
+// rule EasyEffects can display and delete like any other.
+function autoloadBody(device, description, route, preset) {
+  return JSON.stringify({
+    "device": String(device),
+    "device-description": String(description || ""),
+    "device-profile": String(route || ""),
+    "preset-name": String(preset)
+  }, null, 4) + "\n"
 }
 
 function deviceGlyph(name) {
@@ -262,6 +332,97 @@ function deviceLabel(name) {
   if (parts.length >= 2) return parts[1].replace(/_/g, " ")
   var tail = name.split(".").pop()
   return tail === "sink" || tail === "source" ? name.split(".")[0] : tail
+}
+
+// One row per device worth showing in the autoload list, which is not every
+// device on the machine. Eleven sinks and sources, most of them HDMI outputs
+// nobody has ever played through, would bury the presets under hardware. What
+// is worth showing is the device in use, because that is the one you are
+// deciding about, and every device that already has a rule, because a rule you
+// cannot see is a rule you cannot remove.
+function autoloadRows(input) {
+  var devices = input.devices || []
+  var rules = input.rules || {}
+  var current = { output: input.currentOutput || "", input: input.currentInput || "" }
+  var pipelines = input.pipelines || []
+  var rows = []
+  var taken = {}
+
+  function rowFor(pipeline, device, rule) {
+    var name = device ? device.name : ""
+    var route = device ? device.route : (rule ? rule.route || "" : "")
+    var file = device ? autoloadFileName(name, route) : rule.file
+    var described = device ? device.description : rule.description
+    return {
+      pipeline: pipeline,
+      device: name,
+      route: route,
+      fileName: file,
+      description: described || file,
+      label: deviceHeading(described || file, route),
+      glyph: deviceGlyph(name),
+      preset: rule ? rule.preset : "",
+      bound: !!(rule && rule.preset),
+      current: name !== "" && name === current[pipeline],
+      live: device !== null
+    }
+  }
+
+  for (var p = 0; p < pipelines.length; p++) {
+    var pipeline = pipelines[p]
+    var pipeRules = own(rules, pipeline) || {}
+
+    for (var i = 0; i < devices.length; i++) {
+      var device = devices[i]
+      if (device.pipeline !== pipeline || device.name !== current[pipeline]) continue
+      var file = autoloadFileName(device.name, device.route)
+      var held = own(pipeRules, file)
+      taken[pipeline + "\n" + file] = true
+      rows.push(rowFor(pipeline, device, held ? { preset: held.preset } : null))
+    }
+
+    var files = Object.keys(pipeRules).sort()
+    for (var j = 0; j < files.length; j++) {
+      if (own(taken, pipeline + "\n" + files[j])) continue
+      taken[pipeline + "\n" + files[j]] = true
+      var rule = pipeRules[files[j]]
+      rows.push(rowFor(pipeline, deviceForFile(devices, pipeline, files[j]), {
+        file: files[j], preset: rule.preset, description: rule.description, route: rule.route
+      }))
+    }
+  }
+  return rows
+}
+
+function deviceForFile(devices, pipeline, file) {
+  for (var i = 0; i < devices.length; i++) {
+    if (devices[i].pipeline !== pipeline) continue
+    if (autoloadFileName(devices[i].name, devices[i].route) === file) return devices[i]
+  }
+  return null
+}
+
+// "soundcore P31i (Headphones)" says more than either half alone. A card whose
+// description already carries the route, and there are several, says it once.
+function deviceHeading(description, route) {
+  if (!route || String(description).indexOf(route) !== -1) return String(description)
+  return description + " (" + route + ")"
+}
+
+// Written into place through a temporary file in the same directory, because
+// EasyEffects watches that directory and half a rule is not a rule.
+function autoloadWriteCommand(dataDir, pipeline, fileName, body) {
+  return ["sh", "-c", [
+    'set -eu',
+    'D=$1; P=$2; F=$3; B=$4',
+    'mkdir -p "$D/autoload/$P"',
+    'printf "%s" "$B" > "$D/autoload/$P/.$F.new"',
+    'mv "$D/autoload/$P/.$F.new" "$D/autoload/$P/$F"'
+  ].join("\n"), "sh", dataDir, pipeline, fileName, body]
+}
+
+function autoloadRemoveCommand(dataDir, pipeline, fileName) {
+  return ["sh", "-c", 'rm -f "$1/autoload/$2/$3"', "sh", dataDir, pipeline, fileName]
 }
 
 // Only the modes the manifest offers draw anything. A mode falling through to
@@ -316,16 +477,34 @@ function probeCommand(dataDir) {
     'for f in "$1"/irs/*.irs; do',
     '  [ -e "$f" ] || continue',
     '  n=${f##*/}; printf "irs\t%s\n" "${n%.irs}"',
-    'done'
+    'done',
+    'for pipe in output input; do',
+    '  for f in "$1/autoload/$pipe"/*.json; do',
+    '    [ -e "$f" ] || continue',
+    '    n=${f##*/}',
+    '    p=$(grep -o \'"preset-name": *"[^"]*"\' "$f" 2>/dev/null | sed \'s/.*"\\([^"]*\\)"$/\\1/\' | head -n 1)',
+    '    d=$(grep -o \'"device-description": *"[^"]*"\' "$f" 2>/dev/null | sed \'s/.*"\\([^"]*\\)"$/\\1/\' | head -n 1)',
+    '    r=$(grep -o \'"device-profile": *"[^"]*"\' "$f" 2>/dev/null | sed \'s/.*"\\([^"]*\\)"$/\\1/\' | head -n 1)',
+    '    printf "rule\t%s\t%s\t%s\t%s\t%s\n" "$pipe" "$n" "$p" "$d" "$r"',
+    '  done',
+    'done',
+    'printf "@@devices\n"',
+    'printf "@@output\n"',
+    'pactl list sinks 2>/dev/null',
+    'printf "@@input\n"',
+    'pactl list sources 2>/dev/null'
   ].join("\n"), "sh", dataDir]
 }
 
 function parseProbe(text) {
   var out = {
     runtimeDir: "", binary: false, flatpak: false, presetDir: false, socketFile: false,
-    output: [], input: [], kernels: {}, irs: []
+    output: [], input: [], kernels: {}, irs: [],
+    rules: { output: {}, input: {} }, devices: []
   }
-  var lines = String(text || "").split("\n")
+  var halves = String(text || "").split("\n@@devices\n")
+  if (halves.length > 1) out.devices = parseDevices(halves.slice(1).join("\n@@devices\n"))
+  var lines = halves[0].split("\n")
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i]
     if (line.indexOf("runtime=") === 0) out.runtimeDir = line.slice(8)
@@ -342,6 +521,10 @@ function parseProbe(text) {
       } else if (fields[0] === "kernel" && fields[1] && fields[2]) {
         if (!own(out.kernels, fields[1])) out.kernels[fields[1]] = []
         out.kernels[fields[1]].push(fields[2])
+      } else if (fields[0] === "rule" && fields[2] && (fields[1] === "output" || fields[1] === "input")) {
+        out.rules[fields[1]][fields[2]] = {
+          preset: fields[3] || "", description: fields[4] || "", route: fields[5] || ""
+        }
       }
     }
   }

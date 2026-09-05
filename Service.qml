@@ -38,6 +38,8 @@ Item {
   property var inputNames: []
   property var kernelsByPreset: ({})
   property var availableKernels: []
+  property var devices: []
+  property var rules: ({ output: {}, input: {} })
 
   property var ini: ({})
   property bool bypassed: false
@@ -87,7 +89,18 @@ Item {
   readonly property string activeInputPreset: chosenInput !== "" ? chosenInput
     : (readInput !== "" ? readInput : filedInput)
   readonly property string device: Model.currentDevice(ini, "output")
+  readonly property string inputDevice: Model.currentDevice(ini, "input")
   readonly property string deviceLabel: device === "" ? "" : Model.deviceLabel(device)
+
+  // Input devices only earn a row once there is an input preset to bind to
+  // them. Until then it is a control whose only setting is the empty one.
+  readonly property var autoloadRows: Model.autoloadRows({
+    devices: devices,
+    rules: rules,
+    currentOutput: device,
+    currentInput: inputDevice,
+    pipelines: inputPresets.length > 0 ? ["output", "input"] : ["output"]
+  })
 
   readonly property var presets: Model.presetRows({
     names: outputNames,
@@ -190,6 +203,25 @@ Item {
     startProcess.running = true
   }
 
+  // Autoload is EasyEffects' own feature and this only writes the files it
+  // already looks for. It reads the route's description out of them, not the
+  // route's name, so the file has to be named after "Headphones" and not
+  // "headset-output". A file under the wrong name is never found and nothing
+  // anywhere says so, which is why the name is computed in one place.
+  function setAutoload(pipeline, device, description, route, preset) {
+    if (!root.readinessInfo.canSync || device === "" || preset === "") return
+    autoloadProcess.command = Model.autoloadWriteCommand(
+      root.dataDir, pipeline, Model.autoloadFileName(device, route),
+      Model.autoloadBody(device, description, route, preset))
+    autoloadProcess.running = true
+  }
+
+  function removeAutoload(pipeline, fileName) {
+    if (!root.readinessInfo.canSync || fileName === "") return
+    autoloadProcess.command = Model.autoloadRemoveCommand(root.dataDir, pipeline, fileName)
+    autoloadProcess.running = true
+  }
+
   // Escalation belongs to Omarchy's installer, in a terminal the user can see.
   // This plugin never runs a package manager and never asks for a password.
   function install() {
@@ -261,6 +293,8 @@ Item {
     root.inputNames = seen.input
     root.kernelsByPreset = seen.kernels
     root.availableKernels = seen.irs
+    root.devices = seen.devices
+    root.rules = seen.rules
     root.probed = true
     root.sync()
   }
@@ -398,6 +432,14 @@ Item {
 
   Process {
     id: cliProcess
+  }
+
+  Process {
+    id: autoloadProcess
+    onExited: function (exitCode) {
+      if (exitCode !== 0) root.lastError = "the autoload rule could not be written"
+      root.refresh()
+    }
   }
 
   Process {
