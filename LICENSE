@@ -20,8 +20,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
----
-
-The MIT licence above covers the code, the QML, the tests and the ten preset
-files. It does not cover the two impulse responses in presets/irs/, whose
-origin is not known to me. See presets/irs/PROVENANCE.md.

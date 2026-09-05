@@ -163,4 +163,10 @@ plugin only ever writes to it and reads state through `easyeffects -a` and
 
 ## Licence
 
-MIT, except the impulse responses. See [LICENSE](LICENSE).
+[MIT](LICENSE) for the code, the QML, the tests and the ten preset files.
+
+The MIT grant does **not** extend to the two `.irs` files in `presets/irs/`.
+I did not make them and cannot say who did, so I am in no position to license
+them to you. They are redistributed here as-is; see
+[presets/irs/PROVENANCE.md](presets/irs/PROVENANCE.md) for what that means for
+you and how to replace them.
