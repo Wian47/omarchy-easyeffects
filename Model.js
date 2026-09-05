@@ -291,12 +291,16 @@ function barTooltip(view) {
 // parser because the alternative is shipping one or depending on jq, and the
 // field is written by EasyEffects in a fixed shape.
 //
-// Whether the socket is alive is deliberately not asked here. A stale socket
-// file outlives a crash, so the only honest answer comes from connecting.
+// The socket file is reported but is not the answer to whether EasyEffects is
+// running: a stale one outlives a crash. It is the cue to try connecting, which
+// is the only honest answer, and something has to notice the file arriving or a
+// socket that failed to connect once stays failed forever.
 function probeCommand(dataDir) {
   return ["sh", "-c", [
     'set -u',
-    'echo "runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
+    'R="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
+    'echo "runtime=$R"',
+    '[ -S "$R/EasyEffectsServer" ] && echo socketfile=1 || echo socketfile=0',
     'command -v easyeffects >/dev/null 2>&1 && echo binary=1 || echo binary=0',
     '[ -d "$HOME/.var/app/com.github.wwmm.easyeffects" ] && echo flatpak=1 || echo flatpak=0',
     '[ -d "$1/output" ] && echo presetdir=1 || echo presetdir=0',
@@ -318,7 +322,7 @@ function probeCommand(dataDir) {
 
 function parseProbe(text) {
   var out = {
-    runtimeDir: "", binary: false, flatpak: false, presetDir: false,
+    runtimeDir: "", binary: false, flatpak: false, presetDir: false, socketFile: false,
     output: [], input: [], kernels: {}, irs: []
   }
   var lines = String(text || "").split("\n")
@@ -328,6 +332,7 @@ function parseProbe(text) {
     else if (line === "binary=1") out.binary = true
     else if (line === "flatpak=1") out.flatpak = true
     else if (line === "presetdir=1") out.presetDir = true
+    else if (line === "socketfile=1") out.socketFile = true
     else {
       var fields = line.split("\t")
       if (fields[0] === "preset" && fields[2] && (fields[1] === "output" || fields[1] === "input")) {

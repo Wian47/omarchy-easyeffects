@@ -129,6 +129,13 @@ attempt "a privilege escalation in code the shell loads" \
   "sed -i 's|\"omarchy-install-and-launch\", \"EasyEffects\"|\"sudo\", \"pacman\"|' Service.qml" \
   wiring
 
+# A binding on Socket.connected is the shape of the bug that made the start
+# button useless: Quickshell writes the property back to false when a connect
+# fails, the binding dies with it, and nothing ever tries again.
+attempt "a binding put back on the socket's connected property" \
+  "sed -i '0,/^    path: root.socketPath$/s//    path: root.socketPath\\n    connected: root.binaryPresent/' Service.qml" \
+  "node test/wiring.test.js"
+
 # Reading the socket looks harmless and cannot work: get_global_bypass answers
 # with one byte and no terminator, so two replies arrive run together.
 attempt "a parser attached to the socket's unframed replies" \

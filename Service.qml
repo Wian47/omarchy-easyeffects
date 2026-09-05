@@ -33,6 +33,7 @@ Item {
   property bool binaryPresent: false
   property bool flatpakPresent: false
   property bool presetDirPresent: false
+  property bool socketFilePresent: false
   property var outputNames: []
   property var inputNames: []
   property var kernelsByPreset: ({})
@@ -48,6 +49,10 @@ Item {
   property var verdicts: ({})
   property bool syncing: false
 
+  // Counts down the looks taken after asking EasyEffects to start, so a start
+  // that never arrives stops being waited for.
+  property int startLooks: 0
+
   // The panel sets this while it is open. The bypass is the one piece of state
   // EasyEffects will not announce, so it is asked for only while somebody is
   // looking at it.
@@ -61,6 +66,8 @@ Item {
   })
   readonly property var readinessInfo: Model.readinessState(readiness)
   readonly property bool loaded: probed
+
+  onReadinessChanged: if (readiness === "running") root.startLooks = 0
 
   // Three sources, in falling order of trust. What was just asked for, because
   // nothing is faster than knowing. What the running instance says, asked over
@@ -116,6 +123,15 @@ Item {
     probeProcess.running = true
   }
 
+  // Run after every probe, so a socket that was not there last time is tried
+  // again. Connecting is what decides whether EasyEffects is running, because
+  // the file it listens on outlives a crash; one was measured sitting in
+  // /run/user with nothing behind it.
+  function syncSocket() {
+    var wanted = root.socketFilePresent && root.socketPath !== ""
+    if (wanted !== socket.connected) socket.connected = wanted
+  }
+
   function applyPreset(pipeline, name) {
     if (pipeline === "input") root.chosenInput = name
     else root.chosenOutput = name
@@ -161,8 +177,16 @@ Item {
     bypassProcess.running = true
   }
 
+  // Detached on purpose. Quickshell kills the processes it owns when it goes
+  // away, so an EasyEffects started as a child of the bar dies the next time
+  // the shell reloads. `setsid --fork` also returns immediately, which turns
+  // the exit of this command into "the launch happened" rather than "the
+  // daemon stopped", and that is what starts looking for the socket.
   function start() {
-    startProcess.command = ["easyeffects", "--service-mode", "--hide-window"]
+    root.startLooks = 12
+    startProcess.command = [
+      "sh", "-c", "setsid --fork easyeffects --service-mode --hide-window >/dev/null 2>&1"
+    ]
     startProcess.running = true
   }
 
@@ -178,11 +202,6 @@ Item {
   function declineInstall() {
     ledger.declinedInstall = true
     ledgerFile.writeAdapter()
-  }
-
-  function openEasyEffects() {
-    startProcess.command = ["easyeffects"]
-    startProcess.running = true
   }
 
   // Sync is gated on the binary existing, never on it running. With EasyEffects
@@ -236,6 +255,8 @@ Item {
     root.binaryPresent = seen.binary
     root.flatpakPresent = seen.flatpak
     root.presetDirPresent = seen.presetDir
+    root.socketFilePresent = seen.socketFile
+    root.syncSocket()
     root.outputNames = seen.output
     root.inputNames = seen.input
     root.kernelsByPreset = seen.kernels
@@ -246,10 +267,15 @@ Item {
 
   Component.onCompleted: refresh()
 
+  // `connected` is driven, never bound. A binding here looks right and is the
+  // bug that made the start button useless: Quickshell writes `connected` back
+  // to false when a connect fails, which destroys the binding, and nothing ever
+  // asks again. EasyEffects starting afterwards could not be noticed. Measured
+  // on a Socket bound to a constant true: the peer appeared and `connected`
+  // stayed false for the rest of the run.
   Socket {
     id: socket
     path: root.socketPath
-    connected: root.socketPath !== "" && root.binaryPresent
   }
 
   // EasyEffects writes the loaded preset and the current device here, so the
@@ -355,6 +381,19 @@ Item {
   Process {
     id: startProcess
     onExited: root.refresh()
+  }
+
+  // EasyEffects takes a second or two to open its socket, and the panel is
+  // open and being looked at while it does. This closes that gap rather than
+  // leaving the button looking dead until the four second poll comes round.
+  Timer {
+    running: root.startLooks > 0 && root.readiness !== "running"
+    interval: 500
+    repeat: true
+    onTriggered: {
+      root.startLooks -= 1
+      root.refresh()
+    }
   }
 
   Process {

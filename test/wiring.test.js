@@ -146,13 +146,27 @@ test("nothing the shell loads escalates privileges itself", () => {
 
 // The socket's replies carry no framing, so reading it cannot be done safely.
 test("the socket is only ever written to", () => {
-  assert.ok(!/socket\.read|onRead|SplitParser/.test(service),
+  assert.ok(!/socket\.read\b|\bonRead\s*:|\bparser\s*:|SplitParser/.test(service),
     "Service.qml reads the socket, whose replies have no framing to read by")
   assert.ok(service.includes("socket.write"), "Service.qml never writes to the socket")
 })
 
+// Quickshell writes `connected` back to false when a connect fails, which
+// destroys any binding on it. Bound, the socket is tried once, and EasyEffects
+// starting afterwards can never be noticed: the panel stays on "not running"
+// and its start button looks broken. Driven from the probe, it is retried.
+test("the socket connection is driven and never bound", () => {
+  const block = service.match(/Socket\s*\{[^}]*\}/)
+  assert.ok(block, "Service.qml has no Socket")
+  assert.ok(!/\bconnected\s*:/.test(block[0]),
+    "Socket.connected is bound; a failed connect destroys the binding and is never retried")
+  assert.ok(/function syncSocket\(\)/.test(service), "nothing drives the connection")
+  assert.ok(/syncSocket\(\)/.test(service.split("function syncSocket()")[1] || ""),
+    "syncSocket is defined but never called")
+})
+
 test("the shell commands read only what they say they read", () => {
-  const allowed = /^(set|echo|command|printf|grep|sed|for|do|done|while|if|then|fi|cp|mv|mkdir|shift|sha256sum|cut|read|n=|P=|D=|k=|f=|\[|\]|easyeffects|sh|omarchy-install-and-launch)/
+  const allowed = /^(set|echo|command|printf|grep|sed|for|do|done|while|if|then|fi|cp|mv|mkdir|shift|sha256sum|cut|read|n=|P=|D=|R=|k=|f=|\[|\]|easyeffects|sh|omarchy-install-and-launch)/
   for (const line of model.split("\n")) {
     const inShell = line.match(/^\s*'(.+)',?$/)
     if (!inShell) continue
